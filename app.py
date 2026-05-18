@@ -24,6 +24,7 @@ st.set_page_config(
 # Força tema claro independente da preferência do navegador
 st.markdown("""
 <style>
+    /* Fundo geral claro */
     .stApp {
         background-color: #FFFFFF !important;
         color: #1a1a1a !important;
@@ -31,32 +32,63 @@ st.markdown("""
     [data-testid="stHeader"] {
         background-color: #FFFFFF !important;
     }
+    [data-testid="stAppViewContainer"] {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Inputs */
     .stTextInput input, .stSelectbox > div > div {
         background-color: #FFFFFF !important;
         color: #1a1a1a !important;
+        border: 1px solid #dde3ef !important;
     }
     .stTextInput label, .stSelectbox label, .stRadio label {
         color: #1a1a1a !important;
     }
-    h1, h2, h3, h4, h5, h6, p, span, div, label {
+
+    /* Textos */
+    p, span, div, label {
         color: #1a1a1a;
     }
-    /* Mantém os títulos h1-h3 azul escuro do Grupo LLE */
     h1, h2, h3 { color: #041747 !important; }
-    /* Códigos e blocos */
+
+    /* Códigos */
     code, pre {
         background-color: #f4f7fc !important;
         color: #041747 !important;
     }
-    /* Botão primário Grupo LLE */
+
+    /* TODOS os botões: fundo claro com texto escuro (default) */
+    .stButton button {
+        background-color: #FFFFFF !important;
+        color: #041747 !important;
+        border: 1px solid #dde3ef !important;
+    }
+    .stButton button:hover {
+        background-color: #f4f7fc !important;
+        border-color: #041747 !important;
+    }
+
+    /* Botão PRIMÁRIO: azul escuro com texto branco (sobrescreve o default) */
     .stButton button[kind="primary"] {
         background-color: #041747 !important;
-        color: white !important;
+        color: #FFFFFF !important;
         border: none !important;
     }
     .stButton button[kind="primary"]:hover {
         background-color: #007FE0 !important;
     }
+
+    /* Link buttons (botão "Abrir link") */
+    .stLinkButton a {
+        background-color: #041747 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    .stLinkButton a:hover {
+        background-color: #007FE0 !important;
+    }
+
     /* Tabs */
     [data-baseweb="tab-list"] {
         background-color: transparent !important;
@@ -66,6 +98,20 @@ st.markdown("""
     }
     [data-baseweb="tab"][aria-selected="true"] {
         color: #041747 !important;
+    }
+
+    /* Expander */
+    [data-testid="stExpander"] {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stExpander"] summary {
+        color: #1a1a1a !important;
+    }
+
+    /* Forms (caixa onde fica o formulário) */
+    [data-testid="stForm"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #dde3ef !important;
     }
 </style>
 """, unsafe_allow_html=True)
