@@ -31,6 +31,8 @@ CABECALHO = [
     "ultimo_status_raw",
     "ultimo_status_label",
     "criado_por",
+    "liberado_em",
+    "liberado_por",
 ]
 
 
@@ -89,6 +91,8 @@ def _linha_para_dict(linha: list, valores_indices: dict) -> dict:
         "ultimo_status_raw": get_col("ultimo_status_raw"),
         "ultimo_status_label": get_col("ultimo_status_label"),
         "criado_por": get_col("criado_por"),
+        "liberado_em": get_col("liberado_em"),
+        "liberado_por": get_col("liberado_por"),
     }
 
 
@@ -151,6 +155,8 @@ def salvar_link(
         "",  # ultimo_status_raw
         "",  # ultimo_status_label
         criado_por,
+        "",  # liberado_em
+        "",  # liberado_por
     ]
 
     # Se já existir, atualiza; caso contrário, adiciona no final
@@ -179,6 +185,31 @@ def atualizar_status(
         f"H{linha}:K{linha}",
         [[status, agora, status_raw or "", status_label or ""]],
     )
+
+
+def marcar_liberado(cielo_id: str, liberado_por: str = "") -> None:
+    """Marca um link como liberado no ERP (muda status para 'pago_liberado')."""
+    aba = _get_worksheet()
+    linha = _encontrar_linha(cielo_id)
+    if not linha:
+        return
+
+    agora = datetime.now().isoformat(timespec="seconds")
+    # Atualiza status (coluna H) para 'pago_liberado'
+    aba.update(f"H{linha}", [["pago_liberado"]])
+    # Atualiza liberado_em (M) e liberado_por (N)
+    aba.update(f"M{linha}:N{linha}", [[agora, liberado_por]])
+
+
+def desmarcar_liberado(cielo_id: str) -> None:
+    """Reverte a liberação (volta status para 'pago')."""
+    aba = _get_worksheet()
+    linha = _encontrar_linha(cielo_id)
+    if not linha:
+        return
+
+    aba.update(f"H{linha}", [["pago"]])
+    aba.update(f"M{linha}:N{linha}", [["", ""]])
 
 
 def listar_por_status(status: str) -> list[dict]:
