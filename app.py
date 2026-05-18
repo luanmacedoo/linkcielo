@@ -21,6 +21,101 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Força tema claro independente da preferência do navegador
+st.markdown("""
+<style>
+    /* Fundo geral claro */
+    .stApp {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    [data-testid="stHeader"] {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stAppViewContainer"] {
+        background-color: #FFFFFF !important;
+    }
+
+    /* Inputs */
+    .stTextInput input, .stSelectbox > div > div {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+        border: 1px solid #dde3ef !important;
+    }
+    .stTextInput label, .stSelectbox label, .stRadio label {
+        color: #1a1a1a !important;
+    }
+
+    /* Textos */
+    p, span, div, label {
+        color: #1a1a1a;
+    }
+    h1, h2, h3, h4 { color: #041747 !important; }
+
+    /* Códigos */
+    code, pre {
+        background-color: #f4f7fc !important;
+        color: #041747 !important;
+    }
+
+    /* TODOS os botões: fundo claro com texto escuro (default) */
+    .stButton button {
+        background-color: #FFFFFF !important;
+        color: #041747 !important;
+        border: 1px solid #dde3ef !important;
+    }
+    .stButton button:hover {
+        background-color: #f4f7fc !important;
+        border-color: #041747 !important;
+    }
+
+    /* Botão PRIMÁRIO: azul escuro com texto branco */
+    .stButton button[kind="primary"] {
+        background-color: #041747 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    .stButton button[kind="primary"]:hover {
+        background-color: #007FE0 !important;
+    }
+
+    /* Link buttons */
+    .stLinkButton a {
+        background-color: #041747 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    .stLinkButton a:hover {
+        background-color: #007FE0 !important;
+    }
+
+    /* Tabs */
+    [data-baseweb="tab-list"] {
+        background-color: transparent !important;
+    }
+    [data-baseweb="tab"] {
+        color: #666 !important;
+    }
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: #041747 !important;
+    }
+
+    /* Expander */
+    [data-testid="stExpander"] {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stExpander"] summary {
+        color: #1a1a1a !important;
+    }
+
+    /* Forms */
+    [data-testid="stForm"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #dde3ef !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 inject_css()
 
 # ─── Verificação de senha (bloqueia o resto da app se não logado) ────────────
