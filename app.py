@@ -36,14 +36,52 @@ st.markdown("""
         background-color: #FFFFFF !important;
     }
 
-    /* Inputs */
-    .stTextInput input, .stSelectbox > div > div {
+    /* Inputs de texto */
+    .stTextInput input {
         background-color: #FFFFFF !important;
         color: #1a1a1a !important;
         border: 1px solid #dde3ef !important;
     }
     .stTextInput label, .stSelectbox label, .stRadio label {
         color: #1a1a1a !important;
+    }
+
+    /* SELECTBOX (dropdown) - todos os estados */
+    .stSelectbox > div > div {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+        border: 1px solid #dde3ef !important;
+    }
+    .stSelectbox [data-baseweb="select"] {
+        background-color: #FFFFFF !important;
+    }
+    .stSelectbox [data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    /* Lista de opções do dropdown (popup quando abre) */
+    [data-baseweb="popover"] {
+        background-color: #FFFFFF !important;
+    }
+    [data-baseweb="popover"] ul {
+        background-color: #FFFFFF !important;
+    }
+    [data-baseweb="popover"] li {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    [data-baseweb="popover"] li:hover {
+        background-color: #f4f7fc !important;
+    }
+    [role="listbox"] {
+        background-color: #FFFFFF !important;
+    }
+    [role="option"] {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    [role="option"]:hover {
+        background-color: #f4f7fc !important;
     }
 
     /* Textos */
@@ -58,7 +96,7 @@ st.markdown("""
         color: #041747 !important;
     }
 
-    /* TODOS os botões: fundo claro com texto escuro (default) */
+    /* TODOS os botões: fundo claro com texto escuro (default secundário) */
     .stButton button {
         background-color: #FFFFFF !important;
         color: #041747 !important;
@@ -67,6 +105,13 @@ st.markdown("""
     .stButton button:hover {
         background-color: #f4f7fc !important;
         border-color: #041747 !important;
+        color: #041747 !important;
+    }
+    /* Texto dentro do botão secundário */
+    .stButton button p,
+    .stButton button span,
+    .stButton button div {
+        color: #041747 !important;
     }
 
     /* Botão PRIMÁRIO: azul escuro com texto branco */
@@ -77,6 +122,30 @@ st.markdown("""
     }
     .stButton button[kind="primary"]:hover {
         background-color: #007FE0 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    /* Texto dentro do botão primário deve ser branco */
+    .stButton button[kind="primary"] p,
+    .stButton button[kind="primary"] span,
+    .stButton button[kind="primary"] div {
+        color: #FFFFFF !important;
+    }
+
+    /* Botão de submit do form (Gerar Link) - tratado como primário */
+    [data-testid="stFormSubmitButton"] button {
+        background-color: #041747 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+    }
+    [data-testid="stFormSubmitButton"] button:hover {
+        background-color: #007FE0 !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stFormSubmitButton"] button p,
+    [data-testid="stFormSubmitButton"] button span,
+    [data-testid="stFormSubmitButton"] button div {
+        color: #FFFFFF !important;
     }
 
     /* Link buttons */
@@ -87,6 +156,7 @@ st.markdown("""
     }
     .stLinkButton a:hover {
         background-color: #007FE0 !important;
+        color: #FFFFFF !important;
     }
 
     /* Tabs */
@@ -112,6 +182,11 @@ st.markdown("""
     [data-testid="stForm"] {
         background-color: #FFFFFF !important;
         border: 1px solid #dde3ef !important;
+    }
+
+    /* Alertas (success, info, error, warning) - força fundo claro com texto legível */
+    [data-testid="stAlert"] {
+        background-color: #f4f7fc !important;
     }
 </style>
 """, unsafe_allow_html=True)
