@@ -329,7 +329,7 @@ def _render_item_historico(link: dict, categoria: str):
             # PAGO (não liberado): botão "Liberar no ERP" + "Reconsultar"
             elif categoria == "pago":
                 if st.button(
-                    "🔓 Liberar no ERP",
+                    "Marcar como Liberado",
                     key=f"lib_{link['cielo_id']}",
                     use_container_width=True,
                     type="primary",
