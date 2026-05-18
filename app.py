@@ -7,7 +7,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from components.ui import inject_css, render_header, card_status, AZUL_ESC, AMARELO, VERDE
+from components.ui import inject_css, render_header, card_status, AZUL_ESC, AMARELO, VERDE, AZUL
 from utils.auth import verificar_senha, fazer_logout
 from utils.cielo_client import CieloClient, CieloError, classificar_pagamento
 from utils import database as db
@@ -20,101 +20,6 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
-
-# Força tema claro independente da preferência do navegador
-st.markdown("""
-<style>
-    /* Fundo geral claro */
-    .stApp {
-        background-color: #FFFFFF !important;
-        color: #1a1a1a !important;
-    }
-    [data-testid="stHeader"] {
-        background-color: #FFFFFF !important;
-    }
-    [data-testid="stAppViewContainer"] {
-        background-color: #FFFFFF !important;
-    }
-
-    /* Inputs */
-    .stTextInput input, .stSelectbox > div > div {
-        background-color: #FFFFFF !important;
-        color: #1a1a1a !important;
-        border: 1px solid #dde3ef !important;
-    }
-    .stTextInput label, .stSelectbox label, .stRadio label {
-        color: #1a1a1a !important;
-    }
-
-    /* Textos */
-    p, span, div, label {
-        color: #1a1a1a;
-    }
-    h1, h2, h3 { color: #041747 !important; }
-
-    /* Códigos */
-    code, pre {
-        background-color: #f4f7fc !important;
-        color: #041747 !important;
-    }
-
-    /* TODOS os botões: fundo claro com texto escuro (default) */
-    .stButton button {
-        background-color: #FFFFFF !important;
-        color: #041747 !important;
-        border: 1px solid #dde3ef !important;
-    }
-    .stButton button:hover {
-        background-color: #f4f7fc !important;
-        border-color: #041747 !important;
-    }
-
-    /* Botão PRIMÁRIO: azul escuro com texto branco (sobrescreve o default) */
-    .stButton button[kind="primary"] {
-        background-color: #041747 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-    }
-    .stButton button[kind="primary"]:hover {
-        background-color: #007FE0 !important;
-    }
-
-    /* Link buttons (botão "Abrir link") */
-    .stLinkButton a {
-        background-color: #041747 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-    }
-    .stLinkButton a:hover {
-        background-color: #007FE0 !important;
-    }
-
-    /* Tabs */
-    [data-baseweb="tab-list"] {
-        background-color: transparent !important;
-    }
-    [data-baseweb="tab"] {
-        color: #666 !important;
-    }
-    [data-baseweb="tab"][aria-selected="true"] {
-        color: #041747 !important;
-    }
-
-    /* Expander */
-    [data-testid="stExpander"] {
-        background-color: #FFFFFF !important;
-    }
-    [data-testid="stExpander"] summary {
-        color: #1a1a1a !important;
-    }
-
-    /* Forms (caixa onde fica o formulário) */
-    [data-testid="stForm"] {
-        background-color: #FFFFFF !important;
-        border: 1px solid #dde3ef !important;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 inject_css()
 
@@ -176,9 +81,20 @@ def formatar_data(iso_str: str) -> str:
         return iso_str.replace("T", " ")
 
 
-def _render_item_historico(link: dict, eh_pago: bool):
-    """Renderiza um card de item do histórico."""
-    cor_borda = VERDE if eh_pago else AMARELO
+def _render_item_historico(link: dict, categoria: str):
+    """
+    Renderiza um card de item do histórico.
+
+    Args:
+        link: dict com os dados do link.
+        categoria: 'nao_pago', 'pago' ou 'pago_liberado'.
+    """
+    cores_borda = {
+        "nao_pago": AMARELO,
+        "pago": VERDE,
+        "pago_liberado": AZUL,
+    }
+    cor_borda = cores_borda.get(categoria, AMARELO)
 
     with st.container():
         st.markdown(
@@ -200,7 +116,14 @@ def _render_item_historico(link: dict, eh_pago: bool):
             if link.get("short_url"):
                 st.markdown(f"`{link['short_url']}`")
 
-            if eh_pago:
+            # Linha de status conforme categoria
+            if categoria == "pago_liberado":
+                st.caption(
+                    f"✓ Pago em {formatar_data(link.get('ultima_verificacao', ''))} "
+                    f"· 🔓 Liberado no ERP em {formatar_data(link.get('liberado_em', ''))}"
+                    + (f" por {link['liberado_por']}" if link.get("liberado_por") else "")
+                )
+            elif categoria == "pago":
                 st.caption(
                     f"✓ Confirmado em {formatar_data(link.get('ultima_verificacao', ''))}"
                     + (f" — {link['ultimo_status_label']}" if link.get("ultimo_status_label") else "")
@@ -212,25 +135,66 @@ def _render_item_historico(link: dict, eh_pago: bool):
                 )
 
         with col_acao:
-            label_botao = "Reconsultar" if eh_pago else "Atualizar"
-            if st.button(label_botao, key=f"btn_{link['cielo_id']}", use_container_width=True):
-                with st.spinner("Consultando..."):
+            # NÃO PAGO: botões "Atualizar" e "Copiar URL"
+            if categoria == "nao_pago":
+                if st.button("Atualizar", key=f"btn_{link['cielo_id']}", use_container_width=True):
+                    with st.spinner("Consultando..."):
+                        try:
+                            cielo = get_cielo()
+                            orders = cielo.get_link_payments(link["cielo_id"])
+                            status, raw, lbl = classificar_pagamento(orders)
+                            db.atualizar_status(link["cielo_id"], status, raw, lbl)
+                            if status == "pago":
+                                st.success(f"✓ PAGO ({lbl})")
+                            else:
+                                st.info(lbl or "Sem tentativas")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
+
+                if link.get("short_url"):
+                    if st.button("Copiar URL", key=f"cp_{link['cielo_id']}", use_container_width=True):
+                        st.code(link["short_url"], language=None)
+
+            # PAGO (não liberado): botão "Liberar no ERP" + "Reconsultar"
+            elif categoria == "pago":
+                if st.button(
+                    "🔓 Liberar no ERP",
+                    key=f"lib_{link['cielo_id']}",
+                    use_container_width=True,
+                    type="primary",
+                ):
                     try:
-                        cielo = get_cielo()
-                        orders = cielo.get_link_payments(link["cielo_id"])
-                        status, raw, lbl = classificar_pagamento(orders)
-                        db.atualizar_status(link["cielo_id"], status, raw, lbl)
-                        if status == "pago":
-                            st.success(f"✓ PAGO ({lbl})")
-                        else:
-                            st.info(lbl or "Sem tentativas")
+                        db.marcar_liberado(link["cielo_id"])
+                        st.success("✓ Marcado como liberado!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro: {e}")
 
-            if not eh_pago and link.get("short_url"):
-                if st.button("Copiar URL", key=f"cp_{link['cielo_id']}", use_container_width=True):
-                    st.code(link["short_url"], language=None)
+                if st.button("Reconsultar", key=f"btn_{link['cielo_id']}", use_container_width=True):
+                    with st.spinner("Consultando..."):
+                        try:
+                            cielo = get_cielo()
+                            orders = cielo.get_link_payments(link["cielo_id"])
+                            status, raw, lbl = classificar_pagamento(orders)
+                            db.atualizar_status(link["cielo_id"], status, raw, lbl)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
+
+            # PAGO E LIBERADO: botão "Reverter liberação" (caso de erro)
+            elif categoria == "pago_liberado":
+                if st.button(
+                    "↩ Reverter liberação",
+                    key=f"rev_{link['cielo_id']}",
+                    use_container_width=True,
+                ):
+                    try:
+                        db.desmarcar_liberado(link["cielo_id"])
+                        st.success("Liberação revertida.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -399,27 +363,41 @@ with tab_historico:
 
     try:
         pagos = db.listar_por_status("pago")
+        pagos_liberados = db.listar_por_status("pago_liberado")
         nao_pagos = db.listar_por_status("nao_pago")
     except Exception as e:
         st.error(f"Erro ao carregar histórico: {e}")
         st.info(
-            "Verifique se a tabela `links` foi criada no Supabase. "
+            "Verifique se a planilha do Google Sheets está configurada. "
             "Veja o README.md para instruções."
         )
         st.stop()
 
-    # ─── Seção: Pagos (primeiro, por prioridade) ─────────────────────────
+    # ─── Seção: Pagos (aguardando liberação no ERP) ──────────────────────
     st.markdown(
         f'<h4 style="color:{AZUL_ESC};margin-top:16px;">'
-        f'Pagos {card_status(str(len(pagos)), "pago")}</h4>',
+        f'Pagos — aguardando liberação no ERP {card_status(str(len(pagos)), "pago")}</h4>',
         unsafe_allow_html=True
     )
 
     if pagos:
         for link in pagos:
-            _render_item_historico(link, eh_pago=True)
+            _render_item_historico(link, categoria="pago")
     else:
-        st.info("Nenhum pagamento confirmado ainda.")
+        st.info("Nenhum pagamento aguardando liberação.")
+
+    # ─── Seção: Pago e liberado no ERP ───────────────────────────────────
+    st.markdown(
+        f'<h4 style="color:{AZUL_ESC};margin-top:24px;">'
+        f'Pago e liberado no ERP {card_status(str(len(pagos_liberados)), "liberado")}</h4>',
+        unsafe_allow_html=True
+    )
+
+    if pagos_liberados:
+        for link in pagos_liberados:
+            _render_item_historico(link, categoria="pago_liberado")
+    else:
+        st.info("Nenhum link liberado ainda.")
 
     # ─── Seção: Não pagos / Não autorizados ──────────────────────────────
     st.markdown(
@@ -430,6 +408,6 @@ with tab_historico:
 
     if nao_pagos:
         for link in nao_pagos:
-            _render_item_historico(link, eh_pago=False)
+            _render_item_historico(link, categoria="nao_pago")
     else:
         st.info("Nenhum link pendente.")
