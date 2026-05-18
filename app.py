@@ -21,6 +21,55 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Força tema claro independente da preferência do navegador
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    [data-testid="stHeader"] {
+        background-color: #FFFFFF !important;
+    }
+    .stTextInput input, .stSelectbox > div > div {
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+    }
+    .stTextInput label, .stSelectbox label, .stRadio label {
+        color: #1a1a1a !important;
+    }
+    h1, h2, h3, h4, h5, h6, p, span, div, label {
+        color: #1a1a1a;
+    }
+    /* Mantém os títulos h1-h3 azul escuro do Grupo LLE */
+    h1, h2, h3 { color: #041747 !important; }
+    /* Códigos e blocos */
+    code, pre {
+        background-color: #f4f7fc !important;
+        color: #041747 !important;
+    }
+    /* Botão primário Grupo LLE */
+    .stButton button[kind="primary"] {
+        background-color: #041747 !important;
+        color: white !important;
+        border: none !important;
+    }
+    .stButton button[kind="primary"]:hover {
+        background-color: #007FE0 !important;
+    }
+    /* Tabs */
+    [data-baseweb="tab-list"] {
+        background-color: transparent !important;
+    }
+    [data-baseweb="tab"] {
+        color: #666 !important;
+    }
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: #041747 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 inject_css()
 
 # ─── Verificação de senha (bloqueia o resto da app se não logado) ────────────
