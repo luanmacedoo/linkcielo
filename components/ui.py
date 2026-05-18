@@ -99,6 +99,7 @@ def card_status(texto: str, status: str = "pendente"):
     """Renderiza uma badge de status colorida."""
     cores = {
         "pago": VERDE,
+        "liberado": AZUL,
         "pendente": "#666",
         "erro": "#b42318",
     }
