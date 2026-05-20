@@ -241,14 +241,20 @@ def formatar_brl(centavos: int) -> str:
 
 
 def formatar_data(iso_str: str) -> str:
-    """Formata string ISO em '2026-05-18 14:32'."""
+    """Formata string ISO em '18/05/2026 14:32' (sem o timezone)."""
     if not iso_str:
         return "—"
     try:
+        # Remove o sufixo de timezone se houver (ex: '-03:00' ou '+00:00')
+        # pra exibir só o horário local que já foi gravado corretamente.
         dt = datetime.fromisoformat(iso_str)
         return dt.strftime("%d/%m/%Y %H:%M")
     except (ValueError, TypeError):
-        return iso_str.replace("T", " ")
+        # Fallback: tenta limpar timezone manualmente
+        clean = iso_str.replace("T", " ")
+        for tz_suffix in ["-03:00", "+00:00", "Z"]:
+            clean = clean.replace(tz_suffix, "")
+        return clean.strip()
 
 
 def _render_item_historico(link: dict, categoria: str):
@@ -329,7 +335,7 @@ def _render_item_historico(link: dict, categoria: str):
             # PAGO (não liberado): botão "Liberar no ERP" + "Reconsultar"
             elif categoria == "pago":
                 if st.button(
-                    "Marcar como Liberado",
+                    "🔓 Marcar como liberado",
                     key=f"lib_{link['cielo_id']}",
                     use_container_width=True,
                     type="primary",
