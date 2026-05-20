@@ -4,9 +4,9 @@ utils/database.py — Persistência no Google Sheets via gspread.
 Estrutura da planilha (primeira aba, header na linha 1):
     cielo_id | descricao | valor_centavos | valor_exibicao | parcelas_max |
     short_url | criado_em | status | ultima_verificacao | ultimo_status_raw |
-    ultimo_status_label | criado_por
+    ultimo_status_label | criado_por | liberado_em | liberado_por
 """
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import streamlit as st
@@ -17,6 +17,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# Fuso horário de Brasília (UTC-3) — usa offset fixo para não depender de tzdata
+FUSO_BRASILIA = timezone(timedelta(hours=-3))
+
+
+def agora_brasilia() -> str:
+    """Retorna o horário atual no fuso de Brasília, em formato ISO."""
+    return datetime.now(FUSO_BRASILIA).isoformat(timespec="seconds")
 
 CABECALHO = [
     "cielo_id",
@@ -140,7 +148,7 @@ def salvar_link(
 ) -> None:
     """Insere um novo link no histórico (ou atualiza se cielo_id já existir)."""
     aba = _get_worksheet()
-    agora = datetime.now().isoformat(timespec="seconds")
+    agora = agora_brasilia()
 
     nova_linha = [
         cielo_id,
@@ -179,7 +187,7 @@ def atualizar_status(
     if not linha:
         return
 
-    agora = datetime.now().isoformat(timespec="seconds")
+    agora = agora_brasilia()
     # Colunas: H=status, I=ultima_verificacao, J=ultimo_status_raw, K=ultimo_status_label
     aba.update(
         f"H{linha}:K{linha}",
@@ -194,7 +202,7 @@ def marcar_liberado(cielo_id: str, liberado_por: str = "") -> None:
     if not linha:
         return
 
-    agora = datetime.now().isoformat(timespec="seconds")
+    agora = agora_brasilia()
     # Atualiza status (coluna H) para 'pago_liberado'
     aba.update(f"H{linha}", [["pago_liberado"]])
     # Atualiza liberado_em (M) e liberado_por (N)
