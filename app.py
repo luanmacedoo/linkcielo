@@ -241,20 +241,23 @@ def formatar_brl(centavos: int) -> str:
 
 
 def formatar_data(iso_str: str) -> str:
-    """Formata string ISO em '18/05/2026 14:32' (sem o timezone)."""
+    """Formata string ISO em '18/05/2026' (só a data, sem hora)."""
     if not iso_str:
         return "—"
     try:
-        # Remove o sufixo de timezone se houver (ex: '-03:00' ou '+00:00')
-        # pra exibir só o horário local que já foi gravado corretamente.
         dt = datetime.fromisoformat(iso_str)
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return dt.strftime("%d/%m/%Y")
     except (ValueError, TypeError):
-        # Fallback: tenta limpar timezone manualmente
-        clean = iso_str.replace("T", " ")
-        for tz_suffix in ["-03:00", "+00:00", "Z"]:
-            clean = clean.replace(tz_suffix, "")
-        return clean.strip()
+        # Fallback: pega só os primeiros 10 caracteres se for um ISO simples
+        # (ex: '2026-05-18' do começo de '2026-05-18T17:50:00')
+        clean = iso_str.replace("T", " ").strip()
+        if len(clean) >= 10:
+            try:
+                ano, mes, dia = clean[:10].split("-")
+                return f"{dia}/{mes}/{ano}"
+            except ValueError:
+                pass
+        return clean
 
 
 def _render_item_historico(link: dict, categoria: str):
@@ -287,28 +290,25 @@ def _render_item_historico(link: dict, categoria: str):
             st.caption(
                 f"{formatar_brl(link['valor_centavos'])} "
                 f"· até {link['parcelas_max']}x "
-                f"· criado em {formatar_data(link['criado_em'])}"
+                f"· {formatar_data(link['criado_em'])}"
             )
             if link.get("short_url"):
                 st.markdown(f"`{link['short_url']}`")
 
             # Linha de status conforme categoria
             if categoria == "pago_liberado":
-                st.caption(
-                    f"✓ Pago em {formatar_data(link.get('ultima_verificacao', ''))} "
-                    f"· 🔓 Liberado no ERP em {formatar_data(link.get('liberado_em', ''))}"
-                    + (f" por {link['liberado_por']}" if link.get("liberado_por") else "")
-                )
+                texto = "✓ Pago · 🔓 Liberado"
+                if link.get("liberado_por"):
+                    texto += f" por {link['liberado_por']}"
+                st.caption(texto)
             elif categoria == "pago":
-                st.caption(
-                    f"✓ Confirmado em {formatar_data(link.get('ultima_verificacao', ''))}"
-                    + (f" — {link['ultimo_status_label']}" if link.get("ultimo_status_label") else "")
-                )
+                texto = "✓ Pagamento confirmado"
+                if link.get("ultimo_status_label"):
+                    texto = f"✓ {link['ultimo_status_label']}"
+                st.caption(texto)
             elif link.get("ultima_verificacao"):
-                texto_status = link.get("ultimo_status_label") or "sem tentativas de pagamento"
-                st.caption(
-                    f"Última verificação: {formatar_data(link['ultima_verificacao'])} — {texto_status}"
-                )
+                texto_status = link.get("ultimo_status_label") or "Sem tentativas de pagamento"
+                st.caption(texto_status)
 
         with col_acao:
             # NÃO PAGO: botões "Atualizar" e "Copiar URL"
@@ -505,9 +505,14 @@ with tab_novo:
 
 # ─── ABA: HISTÓRICO ──────────────────────────────────────────────────────────
 with tab_historico:
-    col_titulo, col_acao = st.columns([3, 1])
+    col_titulo, col_recarregar, col_acao = st.columns([3, 1, 1])
     with col_titulo:
         st.markdown("### Histórico de links")
+    with col_recarregar:
+        if st.button("♻️ Recarregar", use_container_width=True,
+                     help="Atualiza a lista lendo a planilha novamente"):
+            db.forcar_atualizacao()
+            st.rerun()
     with col_acao:
         if st.button("🔄 Atualizar pendentes", use_container_width=True):
             with st.spinner("Consultando status na Cielo..."):
@@ -549,41 +554,78 @@ with tab_historico:
         )
         st.stop()
 
-    # ─── Seção: Pagos (aguardando liberação no ERP) ──────────────────────
-    st.markdown(
-        f'<h4 style="color:{AZUL_ESC};margin-top:16px;">'
-        f'Pagos — aguardando liberação no ERP {card_status(str(len(pagos)), "pago")}</h4>',
-        unsafe_allow_html=True
-    )
+    # Quantidade inicial mostrada de cada categoria (paginação)
+    QTD_INICIAL = 5
 
-    if pagos:
-        for link in pagos:
-            _render_item_historico(link, categoria="pago")
-    else:
-        st.info("Nenhum pagamento aguardando liberação.")
+    def _render_secao(titulo: str, badge_tipo: str, links: list, categoria: str,
+                      msg_vazia: str, chave_paginacao: str):
+        """Renderiza uma seção do histórico com paginação 'Ver mais'."""
+        st.markdown(
+            f'<h4 style="color:{AZUL_ESC};margin-top:24px;">'
+            f'{titulo} {card_status(str(len(links)), badge_tipo)}</h4>',
+            unsafe_allow_html=True
+        )
+
+        if not links:
+            st.info(msg_vazia)
+            return
+
+        # Quantos mostrar nesta categoria (default = QTD_INICIAL)
+        qtd_mostrar = st.session_state.get(chave_paginacao, QTD_INICIAL)
+        visiveis = links[:qtd_mostrar]
+        restantes = len(links) - qtd_mostrar
+
+        for link in visiveis:
+            _render_item_historico(link, categoria=categoria)
+
+        # Botões "Ver mais" e "Mostrar menos"
+        if restantes > 0 or qtd_mostrar > QTD_INICIAL:
+            col_a, col_b, _ = st.columns([1, 1, 2])
+            if restantes > 0:
+                with col_a:
+                    if st.button(
+                        f"Ver mais ({restantes})",
+                        key=f"more_{chave_paginacao}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[chave_paginacao] = qtd_mostrar + QTD_INICIAL
+                        st.rerun()
+            if qtd_mostrar > QTD_INICIAL:
+                with col_b:
+                    if st.button(
+                        "Mostrar menos",
+                        key=f"less_{chave_paginacao}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[chave_paginacao] = QTD_INICIAL
+                        st.rerun()
+
+    # ─── Seção: Pagos (aguardando liberação no ERP) ──────────────────────
+    _render_secao(
+        titulo="Pagos — aguardando liberação no ERP",
+        badge_tipo="pago",
+        links=pagos,
+        categoria="pago",
+        msg_vazia="Nenhum pagamento aguardando liberação.",
+        chave_paginacao="qtd_pagos",
+    )
 
     # ─── Seção: Pago e liberado no ERP ───────────────────────────────────
-    st.markdown(
-        f'<h4 style="color:{AZUL_ESC};margin-top:24px;">'
-        f'Pago e liberado no ERP {card_status(str(len(pagos_liberados)), "liberado")}</h4>',
-        unsafe_allow_html=True
+    _render_secao(
+        titulo="Pago e liberado no ERP",
+        badge_tipo="liberado",
+        links=pagos_liberados,
+        categoria="pago_liberado",
+        msg_vazia="Nenhum link liberado ainda.",
+        chave_paginacao="qtd_liberados",
     )
-
-    if pagos_liberados:
-        for link in pagos_liberados:
-            _render_item_historico(link, categoria="pago_liberado")
-    else:
-        st.info("Nenhum link liberado ainda.")
 
     # ─── Seção: Não pagos / Não autorizados ──────────────────────────────
-    st.markdown(
-        f'<h4 style="color:{AZUL_ESC};margin-top:24px;">'
-        f'Não pagos / Não autorizados {card_status(str(len(nao_pagos)), "pendente")}</h4>',
-        unsafe_allow_html=True
+    _render_secao(
+        titulo="Não pagos / Não autorizados",
+        badge_tipo="pendente",
+        links=nao_pagos,
+        categoria="nao_pago",
+        msg_vazia="Nenhum link pendente.",
+        chave_paginacao="qtd_nao_pagos",
     )
-
-    if nao_pagos:
-        for link in nao_pagos:
-            _render_item_historico(link, categoria="nao_pago")
-    else:
-        st.info("Nenhum link pendente.")
