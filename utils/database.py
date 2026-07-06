@@ -1,10 +1,15 @@
 """
-utils/database.py — Persistência no Google Sheets via gspread.
+utils/database.py — Persistência no Google Sheets via gspread, com cache.
 
 Estrutura da planilha (primeira aba, header na linha 1):
     cielo_id | descricao | valor_centavos | valor_exibicao | parcelas_max |
     short_url | criado_em | status | ultima_verificacao | ultimo_status_raw |
     ultimo_status_label | criado_por | liberado_em | liberado_por
+
+Cache:
+- `_carregar_todos_com_cache()` é cacheado por 30s (@st.cache_data)
+- Qualquer escrita (salvar, atualizar, liberar) invalida o cache automaticamente
+- `forcar_atualizacao()` permite invalidação manual (ex: botão "Atualizar")
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -21,10 +26,17 @@ SCOPES = [
 # Fuso horário de Brasília (UTC-3) — usa offset fixo para não depender de tzdata
 FUSO_BRASILIA = timezone(timedelta(hours=-3))
 
+# Tempo de vida do cache em segundos.
+# 30s reduz drasticamente as chamadas à API do Sheets, mantendo o histórico
+# razoavelmente atualizado. Depois de escrita, o cache é invalidado
+# automaticamente, então dados novos aparecem imediatamente.
+CACHE_TTL_SEGUNDOS = 30
+
 
 def agora_brasilia() -> str:
     """Retorna o horário atual no fuso de Brasília, em formato ISO."""
     return datetime.now(FUSO_BRASILIA).isoformat(timespec="seconds")
+
 
 CABECALHO = [
     "cielo_id",
@@ -47,19 +59,16 @@ CABECALHO = [
 @st.cache_resource
 def _get_worksheet() -> gspread.Worksheet:
     """Retorna a primeira aba da planilha (cacheado pra não autenticar a cada interação)."""
-    # As credenciais são lidas como dict do st.secrets
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     cliente = gspread.authorize(creds)
     planilha = cliente.open_by_key(st.secrets["GOOGLE_SHEET_ID"])
     aba = planilha.sheet1
 
-    # Garante que o cabeçalho exista (cria se planilha estiver vazia)
     valores = aba.get_all_values()
     if not valores or valores[0] != CABECALHO:
         if not valores:
             aba.append_row(CABECALHO)
-        # Se tiver dados mas cabeçalho errado, sobrescreve só a linha 1
         elif valores[0] != CABECALHO:
             aba.update("A1", [CABECALHO])
 
@@ -104,37 +113,55 @@ def _linha_para_dict(linha: list, valores_indices: dict) -> dict:
     }
 
 
-def _carregar_todos_como_dicts() -> tuple[list[dict], dict]:
-    """
-    Lê toda a planilha e retorna (lista_de_dicts, indices_colunas).
-    Útil pra evitar múltiplas chamadas à API do Sheets.
-    """
+# ─── LEITURA COM CACHE ───────────────────────────────────────────────────────
+# @st.cache_data cacheia o resultado por CACHE_TTL_SEGUNDOS.
+# Quando o cache expira ou é invalidado, faz nova leitura da planilha.
+
+@st.cache_data(ttl=CACHE_TTL_SEGUNDOS, show_spinner=False)
+def _carregar_todos_com_cache() -> list[dict]:
+    """Lê toda a planilha e retorna lista de dicts, CACHEADO por 30s."""
     aba = _get_worksheet()
     valores = aba.get_all_values()
 
     if not valores or len(valores) < 1:
-        return [], {}
+        return []
 
     cabecalho = valores[0]
     indices = {nome: i for i, nome in enumerate(cabecalho)}
     linhas = valores[1:]
 
-    dicts = [_linha_para_dict(linha, indices) for linha in linhas if any(linha)]
-    return dicts, indices
+    return [_linha_para_dict(linha, indices) for linha in linhas if any(linha)]
 
 
-def _encontrar_linha(cielo_id: str) -> Optional[int]:
+def _invalidar_cache() -> None:
     """
-    Retorna o número da linha (1-indexed, considerando cabeçalho na linha 1)
-    onde está o cielo_id, ou None se não achar.
+    Invalida o cache de leitura. Chamado automaticamente após qualquer escrita
+    pra garantir que a próxima leitura pegue dados atualizados.
     """
-    aba = _get_worksheet()
-    try:
-        # gspread procura célula pelo valor; coluna 1 = cielo_id
-        cell = aba.find(cielo_id, in_column=1)
-        return cell.row if cell else None
-    except gspread.exceptions.CellNotFound:
-        return None
+    _carregar_todos_com_cache.clear()
+
+
+def forcar_atualizacao() -> None:
+    """
+    Função pública pra forçar atualização do histórico (usar em botão 'Atualizar').
+    """
+    _invalidar_cache()
+
+
+# ─── OPERAÇÕES ────────────────────────────────────────────────────────────────
+
+def _encontrar_linha_via_cache(cielo_id: str) -> Optional[int]:
+    """
+    Retorna o número da linha (1-indexed) do cielo_id, usando o cache.
+
+    Vantagem: não faz chamada extra ao Sheets (aba.find()). Aproveita os
+    dados já cacheados.
+    """
+    todos = _carregar_todos_com_cache()
+    for i, item in enumerate(todos, start=2):  # start=2 porque linha 1 = header
+        if item.get("cielo_id") == cielo_id:
+            return i
+    return None
 
 
 def salvar_link(
@@ -167,12 +194,13 @@ def salvar_link(
         "",  # liberado_por
     ]
 
-    # Se já existir, atualiza; caso contrário, adiciona no final
-    linha_existente = _encontrar_linha(cielo_id)
+    linha_existente = _encontrar_linha_via_cache(cielo_id)
     if linha_existente:
         aba.update(f"A{linha_existente}", [nova_linha])
     else:
         aba.append_row(nova_linha)
+
+    _invalidar_cache()
 
 
 def atualizar_status(
@@ -183,62 +211,68 @@ def atualizar_status(
 ) -> None:
     """Atualiza colunas de status de um link específico."""
     aba = _get_worksheet()
-    linha = _encontrar_linha(cielo_id)
+    linha = _encontrar_linha_via_cache(cielo_id)
     if not linha:
         return
 
     agora = agora_brasilia()
-    # Colunas: H=status, I=ultima_verificacao, J=ultimo_status_raw, K=ultimo_status_label
     aba.update(
         f"H{linha}:K{linha}",
         [[status, agora, status_raw or "", status_label or ""]],
     )
 
+    _invalidar_cache()
+
 
 def marcar_liberado(cielo_id: str, liberado_por: str = "") -> None:
     """Marca um link como liberado no ERP (muda status para 'pago_liberado')."""
     aba = _get_worksheet()
-    linha = _encontrar_linha(cielo_id)
+    linha = _encontrar_linha_via_cache(cielo_id)
     if not linha:
         return
 
     agora = agora_brasilia()
-    # Atualiza status (coluna H) para 'pago_liberado'
     aba.update(f"H{linha}", [["pago_liberado"]])
-    # Atualiza liberado_em (M) e liberado_por (N)
     aba.update(f"M{linha}:N{linha}", [[agora, liberado_por]])
+
+    _invalidar_cache()
 
 
 def desmarcar_liberado(cielo_id: str) -> None:
     """Reverte a liberação (volta status para 'pago')."""
     aba = _get_worksheet()
-    linha = _encontrar_linha(cielo_id)
+    linha = _encontrar_linha_via_cache(cielo_id)
     if not linha:
         return
 
     aba.update(f"H{linha}", [["pago"]])
     aba.update(f"M{linha}:N{linha}", [["", ""]])
 
+    _invalidar_cache()
+
+
+# ─── FUNÇÕES DE CONSULTA ─────────────────────────────────────────────────────
+# Todas usam o cache. Múltiplas chamadas na mesma execução do app compartilham
+# a mesma leitura, evitando estouro de cota do Sheets.
 
 def listar_por_status(status: str) -> list[dict]:
     """Retorna links com determinado status, mais recentes primeiro."""
-    todos, _ = _carregar_todos_como_dicts()
+    todos = _carregar_todos_com_cache()
     filtrados = [d for d in todos if d.get("status") == status]
-    # Ordena pelos mais recentes primeiro (criado_em em ISO ordena lexicograficamente)
     filtrados.sort(key=lambda d: d.get("criado_em", ""), reverse=True)
     return filtrados
 
 
 def listar_todos() -> list[dict]:
     """Retorna todos os links, mais recentes primeiro."""
-    todos, _ = _carregar_todos_como_dicts()
+    todos = list(_carregar_todos_com_cache())  # copia pra não mexer no cache
     todos.sort(key=lambda d: d.get("criado_em", ""), reverse=True)
     return todos
 
 
 def buscar(cielo_id: str) -> Optional[dict]:
     """Busca um link pelo ID Cielo."""
-    todos, _ = _carregar_todos_como_dicts()
+    todos = _carregar_todos_com_cache()
     for d in todos:
         if d.get("cielo_id") == cielo_id:
             return d
