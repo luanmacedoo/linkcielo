@@ -296,19 +296,57 @@ def _render_item_historico(link: dict, categoria: str):
                 st.markdown(f"`{link['short_url']}`")
 
             # Linha de status conforme categoria
+            parcelas_efetivas = link.get("parcelas_efetivas")
+            sufixo_parcelas = f" · {parcelas_efetivas}x" if parcelas_efetivas else ""
+
             if categoria == "pago_liberado":
                 texto = "✓ Pago · 🔓 Liberado"
                 if link.get("liberado_por"):
                     texto += f" por {link['liberado_por']}"
+                texto += sufixo_parcelas
                 st.caption(texto)
             elif categoria == "pago":
                 texto = "✓ Pagamento confirmado"
                 if link.get("ultimo_status_label"):
                     texto = f"✓ {link['ultimo_status_label']}"
+                texto += sufixo_parcelas
                 st.caption(texto)
             elif link.get("ultima_verificacao"):
                 texto_status = link.get("ultimo_status_label") or "Sem tentativas de pagamento"
                 st.caption(texto_status)
+
+            # AVISO DE CONFIRMAÇÃO — aparece só se está aguardando confirmação
+            # da liberação e mostra em quantas vezes o cliente parcelou.
+            if categoria == "pago" and st.session_state.get(f"confirmar_lib_{link['cielo_id']}"):
+                parcelas_ef = link.get("parcelas_efetivas")
+                if parcelas_ef:
+                    if parcelas_ef == 1:
+                        texto_parcelas = "à vista (1x)"
+                    else:
+                        texto_parcelas = f"em <strong>{parcelas_ef}x</strong>"
+                    aviso_html = (
+                        f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
+                        f'border-radius:6px;padding:10px 12px;margin-top:10px;">'
+                        f'<div style="color:#856404;font-size:13px;font-weight:600;">'
+                        f'⚠️ Atenção antes de liberar</div>'
+                        f'<div style="color:#333;font-size:13px;margin-top:4px;">'
+                        f'Este pagamento foi efetivado {texto_parcelas}.<br>'
+                        f'Confirme se o parcelamento está correto no ERP antes de prosseguir.'
+                        f'</div></div>'
+                    )
+                else:
+                    aviso_html = (
+                        f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
+                        f'border-radius:6px;padding:10px 12px;margin-top:10px;">'
+                        f'<div style="color:#856404;font-size:13px;font-weight:600;">'
+                        f'⚠️ Atenção antes de liberar</div>'
+                        f'<div style="color:#333;font-size:13px;margin-top:4px;">'
+                        f'Não há informação sobre o parcelamento efetivo deste pagamento. '
+                        f'Clique em "Reconsultar" pra buscar essa informação antes de liberar, '
+                        f'ou confirme se souber o parcelamento correto.'
+                        f'</div></div>'
+                    )
+                st.markdown(aviso_html, unsafe_allow_html=True)
 
         with col_acao:
             # NÃO PAGO: botões "Atualizar" e "Copiar URL"
@@ -318,10 +356,13 @@ def _render_item_historico(link: dict, categoria: str):
                         try:
                             cielo = get_cielo()
                             orders = cielo.get_link_payments(link["cielo_id"])
-                            status, raw, lbl = classificar_pagamento(orders)
-                            db.atualizar_status(link["cielo_id"], status, raw, lbl)
+                            status, raw, lbl, parcelas = classificar_pagamento(orders)
+                            db.atualizar_status(link["cielo_id"], status, raw, lbl, parcelas)
                             if status == "pago":
-                                st.success(f"✓ PAGO ({lbl})")
+                                msg = f"✓ PAGO ({lbl})"
+                                if parcelas:
+                                    msg += f" · {parcelas}x"
+                                st.success(msg)
                             else:
                                 st.info(lbl or "Sem tentativas")
                             st.rerun()
@@ -334,26 +375,51 @@ def _render_item_historico(link: dict, categoria: str):
 
             # PAGO (não liberado): botão "Liberar no ERP" + "Reconsultar"
             elif categoria == "pago":
-                if st.button(
-                    "🔓 Marcar como liberado",
-                    key=f"lib_{link['cielo_id']}",
-                    use_container_width=True,
-                    type="primary",
-                ):
-                    try:
-                        db.marcar_liberado(link["cielo_id"])
-                        st.success("✓ Marcado como liberado!")
+                # Chave de session_state pra rastrear se está aguardando confirmação
+                confirmar_key = f"confirmar_lib_{link['cielo_id']}"
+                aguardando_confirmacao = st.session_state.get(confirmar_key, False)
+
+                if not aguardando_confirmacao:
+                    # Primeiro clique: pede confirmação
+                    if st.button(
+                        "🔓 Marcar como liberado",
+                        key=f"lib_{link['cielo_id']}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state[confirmar_key] = True
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                else:
+                    # Aguardando confirmação: mostra dois botões
+                    if st.button(
+                        "✓ Confirmar",
+                        key=f"conf_{link['cielo_id']}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        try:
+                            db.marcar_liberado(link["cielo_id"])
+                            st.session_state[confirmar_key] = False
+                            st.success("✓ Marcado como liberado!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
+
+                    if st.button(
+                        "✕ Cancelar",
+                        key=f"canc_{link['cielo_id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[confirmar_key] = False
+                        st.rerun()
 
                 if st.button("Reconsultar", key=f"btn_{link['cielo_id']}", use_container_width=True):
                     with st.spinner("Consultando..."):
                         try:
                             cielo = get_cielo()
                             orders = cielo.get_link_payments(link["cielo_id"])
-                            status, raw, lbl = classificar_pagamento(orders)
-                            db.atualizar_status(link["cielo_id"], status, raw, lbl)
+                            status, raw, lbl, parcelas = classificar_pagamento(orders)
+                            db.atualizar_status(link["cielo_id"], status, raw, lbl, parcelas)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erro: {e}")
@@ -525,8 +591,8 @@ with tab_historico:
                     for link in nao_pagos:
                         try:
                             orders = cielo.get_link_payments(link["cielo_id"])
-                            status, raw, label = classificar_pagamento(orders)
-                            db.atualizar_status(link["cielo_id"], status, raw, label)
+                            status, raw, label, parcelas = classificar_pagamento(orders)
+                            db.atualizar_status(link["cielo_id"], status, raw, label, parcelas)
                             if status == "pago":
                                 novos_pagos += 1
                         except Exception:
