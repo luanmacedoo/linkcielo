@@ -53,6 +53,7 @@ CABECALHO = [
     "criado_por",
     "liberado_em",
     "liberado_por",
+    "parcelas_efetivas",  # Coluna O — nº de vezes que cliente parcelou (vindo da Cielo)
 ]
 
 
@@ -95,6 +96,17 @@ def _linha_para_dict(linha: list, valores_indices: dict) -> dict:
     except ValueError:
         parcelas_int = 1
 
+    # Parcelas efetivas: pode ser vazio (link antigo ou não pago ainda)
+    parcelas_efetivas_str = get_col("parcelas_efetivas", "")
+    parcelas_efetivas: Optional[int]
+    if parcelas_efetivas_str:
+        try:
+            parcelas_efetivas = int(parcelas_efetivas_str)
+        except ValueError:
+            parcelas_efetivas = None
+    else:
+        parcelas_efetivas = None
+
     return {
         "cielo_id": get_col("cielo_id"),
         "descricao": get_col("descricao"),
@@ -110,6 +122,7 @@ def _linha_para_dict(linha: list, valores_indices: dict) -> dict:
         "criado_por": get_col("criado_por"),
         "liberado_em": get_col("liberado_em"),
         "liberado_por": get_col("liberado_por"),
+        "parcelas_efetivas": parcelas_efetivas,
     }
 
 
@@ -192,6 +205,7 @@ def salvar_link(
         criado_por,
         "",  # liberado_em
         "",  # liberado_por
+        "",  # parcelas_efetivas (só preenchido quando pago)
     ]
 
     linha_existente = _encontrar_linha_via_cache(cielo_id)
@@ -208,18 +222,29 @@ def atualizar_status(
     status: str,
     status_raw: Optional[str],
     status_label: Optional[str],
+    parcelas_efetivas: Optional[int] = None,
 ) -> None:
-    """Atualiza colunas de status de um link específico."""
+    """
+    Atualiza colunas de status de um link específico.
+
+    Se `parcelas_efetivas` for informado, também grava esse valor na coluna O
+    (número de vezes que o cliente escolheu parcelar no ato do pagamento).
+    """
     aba = _get_worksheet()
     linha = _encontrar_linha_via_cache(cielo_id)
     if not linha:
         return
 
     agora = agora_brasilia()
+    # Colunas: H=status, I=ultima_verificacao, J=ultimo_status_raw, K=ultimo_status_label
     aba.update(
         f"H{linha}:K{linha}",
         [[status, agora, status_raw or "", status_label or ""]],
     )
+
+    # Coluna O = parcelas_efetivas (só sobrescreve se veio valor novo)
+    if parcelas_efetivas is not None:
+        aba.update(f"O{linha}", [[str(parcelas_efetivas)]])
 
     _invalidar_cache()
 
