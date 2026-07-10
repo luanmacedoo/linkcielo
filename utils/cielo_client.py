@@ -171,25 +171,50 @@ class CieloClient:
         return []
 
 
-def classificar_pagamento(orders: list[dict]) -> tuple[str, str | None, str | None]:
-    """Analisa lista de orders e retorna (status_simples, status_raw, label_pt)."""
+def classificar_pagamento(
+    orders: list[dict],
+) -> tuple[str, str | None, str | None, int | None]:
+    """
+    Analisa lista de orders e retorna:
+        (status_simples, status_raw, label_pt, parcelas_efetivas)
+
+    parcelas_efetivas: número de vezes que o cliente escolheu parcelar
+                       (retorno da Cielo no campo `installments`).
+                       Retorna None se não houver info ou se não foi pago.
+    """
     if not orders:
-        return ("nao_pago", None, None)
+        return ("nao_pago", None, None, None)
 
     melhor_status: str | None = None
     foi_pago = False
+    parcelas_efetivas: int | None = None
 
     for order in orders:
         payment = order.get("payment") or order.get("Payment") or {}
         status_str = payment.get("status") or payment.get("Status")
         if not status_str:
             continue
+
         if status_str in CIELO_STATUS_PAGO:
             foi_pago = True
             melhor_status = status_str
+            # Extrai o número de parcelas efetivo. A Cielo retorna como
+            # 'installments' (camelCase) ou 'Installments' (PascalCase).
+            raw_installments = payment.get("installments") or payment.get("Installments")
+            if raw_installments is not None:
+                try:
+                    parcelas_efetivas = int(raw_installments)
+                except (ValueError, TypeError):
+                    parcelas_efetivas = None
             break
+
         if melhor_status is None:
             melhor_status = status_str
 
     label = CIELO_STATUS_LABEL_PT.get(melhor_status) if melhor_status else None
-    return ("pago" if foi_pago else "nao_pago", melhor_status, label)
+    return (
+        "pago" if foi_pago else "nao_pago",
+        melhor_status,
+        label,
+        parcelas_efetivas,
+    )
