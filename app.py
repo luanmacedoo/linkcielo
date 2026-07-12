@@ -656,6 +656,9 @@ with tab_historico:
                         continue
                     try:
                         criado_em = datetime.fromisoformat(criado_em_str)
+                        # Se veio sem timezone (links antigos), assume Brasília
+                        if criado_em.tzinfo is None:
+                            criado_em = criado_em.replace(tzinfo=FUSO_BRASILIA)
                         if criado_em + prazo_validade > agora:
                             nao_pagos_ativos.append(link)
                         else:
@@ -812,3 +815,82 @@ with tab_historico:
         msg_vazia="Nenhum link pendente.",
         chave_paginacao="qtd_nao_pagos",
     )
+
+    # ─── Seção: Ferramentas de manutenção ────────────────────────────────
+    # Reprocessa os pagos antigos que ainda não têm o número de parcelas
+    # gravado na planilha (dado só foi incluído a partir de julho/2026).
+    # Consulta a Cielo pra cada um e popula a coluna parcelas_efetivas.
+    todos_links = pagos + pagos_liberados
+    pagos_sem_parcelas = [
+        link for link in todos_links
+        if not link.get("parcelas_efetivas")
+    ]
+
+    if pagos_sem_parcelas:
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander(
+            f"🔧 Manutenção: {len(pagos_sem_parcelas)} pago(s) sem info de parcelas"
+        ):
+            st.caption(
+                "Estes pagamentos foram confirmados antes de o app começar a "
+                "registrar o número de parcelas efetivas. Você pode reprocessá-los "
+                "pra buscar essa informação retroativamente na Cielo. "
+                "Cada consulta leva 1-2 segundos."
+            )
+            if st.button(
+                f"🔄 Reprocessar {len(pagos_sem_parcelas)} pago(s)",
+                use_container_width=True,
+                key="reprocessar_pagos_antigos",
+            ):
+                try:
+                    cielo = get_cielo()
+                    total = len(pagos_sem_parcelas)
+                    progresso_r = st.progress(
+                        0.0,
+                        text=f"Reprocessando... (0/{total})",
+                    )
+                    atualizacoes = []
+                    encontrados = 0
+                    erros = 0
+
+                    for i, link in enumerate(pagos_sem_parcelas):
+                        try:
+                            orders = cielo.get_link_payments(link["cielo_id"])
+                            status_novo, raw, label, parcelas = classificar_pagamento(orders)
+                            # Só grava se a Cielo devolveu a info de parcelas
+                            if parcelas is not None:
+                                atualizacoes.append({
+                                    "cielo_id": link["cielo_id"],
+                                    # Preserva o status atual (não sobrescreve
+                                    # pago_liberado por pago, por exemplo)
+                                    "status": link.get("status", status_novo),
+                                    "status_raw": link.get("ultimo_status_raw") or raw,
+                                    "status_label": link.get("ultimo_status_label") or label,
+                                    "parcelas_efetivas": parcelas,
+                                })
+                                encontrados += 1
+                        except Exception:
+                            erros += 1
+
+                        progresso_r.progress(
+                            (i + 1) / total,
+                            text=f"Reprocessando... ({i + 1}/{total})",
+                        )
+
+                    progresso_r.progress(1.0, text="Salvando resultados na planilha...")
+                    db.atualizar_status_em_lote(atualizacoes)
+                    progresso_r.empty()
+
+                    if encontrados > 0:
+                        st.success(
+                            f"✓ Parcelas populadas em {encontrados} de {total} link(s)."
+                        )
+                    else:
+                        st.info(
+                            f"Nenhum dos {total} link(s) teve info de parcelas retornada pela Cielo."
+                        )
+                    if erros:
+                        st.warning(f"⚠️ {erros} link(s) falharam na consulta.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
