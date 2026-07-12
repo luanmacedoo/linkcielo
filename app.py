@@ -315,38 +315,46 @@ def _render_item_historico(link: dict, categoria: str):
                 texto_status = link.get("ultimo_status_label") or "Sem tentativas de pagamento"
                 st.caption(texto_status)
 
-            # AVISO DE CONFIRMAÇÃO — aparece só se está aguardando confirmação
-            # da liberação e mostra em quantas vezes o cliente parcelou.
-            if categoria == "pago" and st.session_state.get(f"confirmar_lib_{link['cielo_id']}"):
-                parcelas_ef = link.get("parcelas_efetivas")
-                if parcelas_ef:
-                    if parcelas_ef == 1:
-                        texto_parcelas = "à vista (1x)"
+            # ─── AVISO PERMANENTE de divergência de parcelas ─────────────
+            # Aparece sempre no card (não só após clique) quando o link
+            # está pago-não-liberado e há divergência entre configurado e
+            # efetivo, ou quando não temos info do parcelamento.
+            if categoria == "pago":
+                parcelas_max_v = link.get("parcelas_max") or 1
+                parcelas_ef_v = link.get("parcelas_efetivas")
+
+                if parcelas_ef_v is None:
+                    # Sem info do parcelamento efetivo (link antigo)
+                    st.markdown(
+                        f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
+                        f'border-radius:6px;padding:8px 10px;margin-top:8px;'
+                        f'font-size:12px;color:#856404;">'
+                        f'⚠️ <strong>Sem info do parcelamento efetivo.</strong> '
+                        f'Clique em "Reconsultar" pra buscar essa informação antes de liberar.'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif parcelas_ef_v != parcelas_max_v:
+                    # Divergência entre configurado e efetivo
+                    if parcelas_ef_v == 1:
+                        efetivo_txt = "à vista (1x)"
                     else:
-                        texto_parcelas = f"em <strong>{parcelas_ef}x</strong>"
-                    aviso_html = (
-                        f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
-                        f'border-radius:6px;padding:10px 12px;margin-top:10px;">'
-                        f'<div style="color:#856404;font-size:13px;font-weight:600;">'
-                        f'⚠️ Atenção antes de liberar</div>'
-                        f'<div style="color:#333;font-size:13px;margin-top:4px;">'
-                        f'Este pagamento foi efetivado {texto_parcelas}.<br>'
-                        f'Confirme se o parcelamento está correto no ERP antes de prosseguir.'
-                        f'</div></div>'
+                        efetivo_txt = f"em <strong>{parcelas_ef_v}x</strong>"
+                    if parcelas_max_v == 1:
+                        esperado_txt = "à vista (1x)"
+                    else:
+                        esperado_txt = f"até <strong>{parcelas_max_v}x</strong>"
+
+                    st.markdown(
+                        f'<div style="background:#fff3cd;border:1px solid #ff9800;'
+                        f'border-radius:6px;padding:8px 10px;margin-top:8px;'
+                        f'font-size:12px;color:#b45309;">'
+                        f'⚠️ <strong>Parcelamento diferente do configurado.</strong> '
+                        f'Você configurou {esperado_txt}, mas o cliente pagou {efetivo_txt}. '
+                        f'Registre o parcelamento correto no ERP.'
+                        f'</div>',
+                        unsafe_allow_html=True,
                     )
-                else:
-                    aviso_html = (
-                        f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
-                        f'border-radius:6px;padding:10px 12px;margin-top:10px;">'
-                        f'<div style="color:#856404;font-size:13px;font-weight:600;">'
-                        f'⚠️ Atenção antes de liberar</div>'
-                        f'<div style="color:#333;font-size:13px;margin-top:4px;">'
-                        f'Não há informação sobre o parcelamento efetivo deste pagamento. '
-                        f'Clique em "Reconsultar" pra buscar essa informação antes de liberar, '
-                        f'ou confirme se souber o parcelamento correto.'
-                        f'</div></div>'
-                    )
-                st.markdown(aviso_html, unsafe_allow_html=True)
 
         with col_acao:
             # NÃO PAGO: botões "Atualizar" e "Copiar URL"
@@ -379,16 +387,36 @@ def _render_item_historico(link: dict, categoria: str):
                 confirmar_key = f"confirmar_lib_{link['cielo_id']}"
                 aguardando_confirmacao = st.session_state.get(confirmar_key, False)
 
+                # Determina se precisa de confirmação:
+                # - Sem info de parcelas_efetivas → precisa confirmar (link antigo)
+                # - parcelas_efetivas != parcelas_max → precisa confirmar (divergência)
+                # - parcelas_efetivas == parcelas_max → NÃO precisa (deu como esperado)
+                parcelas_max = link.get("parcelas_max") or 1
+                parcelas_ef = link.get("parcelas_efetivas")
+                precisa_confirmar = (
+                    parcelas_ef is None or parcelas_ef != parcelas_max
+                )
+
                 if not aguardando_confirmacao:
-                    # Primeiro clique: pede confirmação
+                    # Primeiro clique
                     if st.button(
                         "🔓 Marcar como liberado",
                         key=f"lib_{link['cielo_id']}",
                         use_container_width=True,
                         type="primary",
                     ):
-                        st.session_state[confirmar_key] = True
-                        st.rerun()
+                        if precisa_confirmar:
+                            # Precisa de confirmação: entra em modo aguardando
+                            st.session_state[confirmar_key] = True
+                            st.rerun()
+                        else:
+                            # Parcelas batem: libera direto, sem confirmação
+                            try:
+                                db.marcar_liberado(link["cielo_id"])
+                                st.success("✓ Marcado como liberado!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
                 else:
                     # Aguardando confirmação: mostra dois botões
                     if st.button(
