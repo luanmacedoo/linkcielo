@@ -249,6 +249,65 @@ def atualizar_status(
     _invalidar_cache()
 
 
+def atualizar_status_em_lote(atualizacoes: list[dict]) -> None:
+    """
+    Atualiza status de múltiplos links em UMA única chamada ao Google Sheets
+    (batch_update). Muito mais rápido do que chamar atualizar_status() em loop.
+
+    Args:
+        atualizacoes: lista de dicts com chaves:
+            - cielo_id (obrigatório)
+            - status
+            - status_raw
+            - status_label
+            - parcelas_efetivas (pode ser None)
+    """
+    if not atualizacoes:
+        return
+
+    aba = _get_worksheet()
+
+    # Constrói índice cielo_id → linha (evita chamadas find() repetidas)
+    dados = _carregar_todos_com_cache()
+    id_para_linha = {item["cielo_id"]: idx + 2 for idx, item in enumerate(dados)}
+
+    agora = agora_brasilia()
+    updates: list[dict] = []
+
+    for atual in atualizacoes:
+        cielo_id = atual.get("cielo_id")
+        if not cielo_id:
+            continue
+        linha = id_para_linha.get(cielo_id)
+        if not linha:
+            continue
+
+        # Range H:K = status, ultima_verificacao, ultimo_status_raw, ultimo_status_label
+        updates.append({
+            "range": f"H{linha}:K{linha}",
+            "values": [[
+                atual.get("status", ""),
+                agora,
+                atual.get("status_raw") or "",
+                atual.get("status_label") or "",
+            ]],
+        })
+
+        # Coluna O = parcelas_efetivas (só se veio valor)
+        parcelas = atual.get("parcelas_efetivas")
+        if parcelas is not None:
+            updates.append({
+                "range": f"O{linha}",
+                "values": [[str(parcelas)]],
+            })
+
+    if updates:
+        # UMA única chamada HTTP ao Google Sheets pra todas as atualizações
+        aba.batch_update(updates)
+
+    _invalidar_cache()
+
+
 def marcar_liberado(cielo_id: str, liberado_por: str = "") -> None:
     """Marca um link como liberado no ERP (muda status para 'pago_liberado')."""
     aba = _get_worksheet()
