@@ -206,9 +206,16 @@ def classificar_pagamento(
         if status_str in CIELO_STATUS_PAGO:
             foi_pago = True
             melhor_status = status_str
-            # Extrai o número de parcelas efetivo. A Cielo retorna como
-            # 'installments' (camelCase) ou 'Installments' (PascalCase).
-            raw_installments = payment.get("installments") or payment.get("Installments")
+            # Extrai o número de parcelas efetivo. A Cielo usa
+            # 'numberOfPayments' nas respostas de /v1/products/{id}/payments.
+            # Testamos também 'installments' como fallback pra outros endpoints
+            # que porventura usem esse nome.
+            raw_installments = (
+                payment.get("numberOfPayments")
+                or payment.get("NumberOfPayments")
+                or payment.get("installments")
+                or payment.get("Installments")
+            )
             if raw_installments is not None:
                 try:
                     parcelas_efetivas = int(raw_installments)
