@@ -837,6 +837,35 @@ with tab_historico:
                 "pra buscar essa informação retroativamente na Cielo. "
                 "Cada consulta leva 1-2 segundos."
             )
+
+            # ─── Botão de DEBUG temporário ───────────────────────────────
+            # Mostra a resposta bruta da API Cielo pra 1 link, pra identificar
+            # em qual campo vem o número de parcelas.
+            st.markdown("**🔍 Debug — inspecionar resposta da API**")
+            st.caption(
+                "Clique no botão abaixo pra ver a resposta CRUA da API Cielo "
+                "pra um dos pagos. Isso ajuda a identificar em qual campo o "
+                "número de parcelas vem retornado."
+            )
+            link_debug = pagos_sem_parcelas[0]  # pega o primeiro
+            st.caption(
+                f"Link escolhido pra inspeção: `{link_debug['cielo_id']}` "
+                f"— {link_debug.get('descricao', '')[:50]}"
+            )
+            if st.button(
+                "🔍 Ver JSON cru da Cielo",
+                use_container_width=True,
+                key="debug_ver_json",
+            ):
+                try:
+                    cielo = get_cielo()
+                    orders = cielo.get_link_payments(link_debug["cielo_id"])
+                    st.json(orders)
+                except Exception as e:
+                    st.error(f"Erro ao consultar: {e}")
+
+            st.markdown("---")
+            st.markdown("**Reprocessamento em lote**")
             if st.button(
                 f"🔄 Reprocessar {len(pagos_sem_parcelas)} pago(s)",
                 use_container_width=True,
