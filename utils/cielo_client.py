@@ -125,9 +125,13 @@ class CieloClient:
         if max_installments is not None:
             body["maxNumberOfInstallments"] = max_installments
 
-        # Data de expiração: agora + LINK_EXPIRATION_DAYS (formato ISO 8601 UTC)
-        expira_em = datetime.now(timezone.utc) + timedelta(days=LINK_EXPIRATION_DAYS)
-        body["expirationDate"] = expira_em.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Data de expiração: agora + LINK_EXPIRATION_DAYS
+        # Formato aceito pela Cielo: 'yyyy-MM-dd HH:mm:ss' (com espaço, sem timezone).
+        # Usa fuso de Brasília porque a Cielo é BR e não aceita Z/offset no formato.
+        from datetime import timezone as _tz
+        FUSO_BR = _tz(timedelta(hours=-3))
+        expira_em = datetime.now(FUSO_BR) + timedelta(days=LINK_EXPIRATION_DAYS)
+        body["expirationDate"] = expira_em.strftime("%Y-%m-%d %H:%M:%S")
 
         try:
             response = requests.post(
