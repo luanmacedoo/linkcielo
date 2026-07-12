@@ -3,14 +3,17 @@ app.py — Gerador de Link de Pagamento Cielo — Grupo LLE
 Streamlit App com Supabase e autenticação por senha.
 """
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
 
 from components.ui import inject_css, render_header, card_status, AZUL_ESC, AMARELO, VERDE, AZUL
 from utils.auth import verificar_senha, fazer_logout
-from utils.cielo_client import CieloClient, CieloError, classificar_pagamento
+from utils.cielo_client import (
+    CieloClient, CieloError, classificar_pagamento, LINK_EXPIRATION_DAYS,
+)
 from utils import database as db
+from utils.database import FUSO_BRASILIA
 
 
 # ─── Configuração da página ──────────────────────────────────────────────────
@@ -324,13 +327,17 @@ def _render_item_historico(link: dict, categoria: str):
                 parcelas_ef_v = link.get("parcelas_efetivas")
 
                 if parcelas_ef_v is None:
-                    # Sem info do parcelamento efetivo (link antigo)
+                    # Sem info do parcelamento na planilha (pagamento antigo,
+                    # confirmado antes da atualização que passou a capturar
+                    # esse dado). Ao clicar em "Marcar como liberado", o app
+                    # já vai buscar essa informação automaticamente na Cielo.
                     st.markdown(
                         f'<div style="background:#fff8e1;border:1px solid {AMARELO};'
                         f'border-radius:6px;padding:8px 10px;margin-top:8px;'
                         f'font-size:12px;color:#856404;">'
-                        f'⚠️ <strong>Sem info do parcelamento efetivo.</strong> '
-                        f'Clique em "Reconsultar" pra buscar essa informação antes de liberar.'
+                        f'⚠️ <strong>Parcelamento ainda não foi buscado.</strong> '
+                        f'Ao clicar em "Marcar como liberado", o app buscará automaticamente '
+                        f'quantas vezes o cliente parcelou.'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -405,6 +412,27 @@ def _render_item_historico(link: dict, categoria: str):
                         use_container_width=True,
                         type="primary",
                     ):
+                        # Se não temos info de parcelas efetivas, tenta buscar
+                        # automaticamente antes de decidir se pede confirmação.
+                        if parcelas_ef is None:
+                            with st.spinner("Buscando parcelamento na Cielo..."):
+                                try:
+                                    cielo = get_cielo()
+                                    orders = cielo.get_link_payments(link["cielo_id"])
+                                    status_novo, raw, lbl, parcelas_novas = classificar_pagamento(orders)
+                                    db.atualizar_status(
+                                        link["cielo_id"], status_novo, raw, lbl, parcelas_novas
+                                    )
+                                    # Atualiza o dict local pra próximo passo enxergar o novo valor
+                                    link["parcelas_efetivas"] = parcelas_novas
+                                    parcelas_ef = parcelas_novas
+                                    # Recalcula precisa_confirmar com o valor atualizado
+                                    precisa_confirmar = (
+                                        parcelas_ef is None or parcelas_ef != parcelas_max
+                                    )
+                                except Exception as e:
+                                    st.warning(f"Não foi possível buscar parcelamento: {e}")
+
                         if precisa_confirmar:
                             # Precisa de confirmação: entra em modo aguardando
                             st.session_state[confirmar_key] = True
@@ -609,32 +637,93 @@ with tab_historico:
             st.rerun()
     with col_acao:
         if st.button("🔄 Atualizar pendentes", use_container_width=True):
-            with st.spinner("Consultando status na Cielo..."):
-                try:
-                    nao_pagos = db.listar_por_status("nao_pago")
+            try:
+                nao_pagos = db.listar_por_status("nao_pago")
+
+                # Filtra apenas links ainda dentro do prazo de expiração.
+                # Links já expirados não podem ser pagos, então consultá-los
+                # gasta chamadas API à toa.
+                agora = datetime.now(FUSO_BRASILIA)
+                prazo_validade = timedelta(days=LINK_EXPIRATION_DAYS)
+                nao_pagos_ativos = []
+                expirados_ignorados = 0
+
+                for link in nao_pagos:
+                    criado_em_str = link.get("criado_em", "")
+                    if not criado_em_str:
+                        # Sem data de criação: inclui por segurança
+                        nao_pagos_ativos.append(link)
+                        continue
+                    try:
+                        criado_em = datetime.fromisoformat(criado_em_str)
+                        if criado_em + prazo_validade > agora:
+                            nao_pagos_ativos.append(link)
+                        else:
+                            expirados_ignorados += 1
+                    except ValueError:
+                        # Data mal formatada: inclui por segurança
+                        nao_pagos_ativos.append(link)
+
+                if not nao_pagos_ativos:
+                    if expirados_ignorados > 0:
+                        st.info(
+                            f"Todos os {expirados_ignorados} pendente(s) já passaram "
+                            f"do prazo de validade ({LINK_EXPIRATION_DAYS} dia(s))."
+                        )
+                    else:
+                        st.info("Nenhum link pendente para consultar.")
+                else:
                     cielo = get_cielo()
+                    total = len(nao_pagos_ativos)
+                    progresso = st.progress(
+                        0.0,
+                        text=f"Consultando Cielo... (0/{total})",
+                    )
+                    atualizacoes = []
                     novos_pagos = 0
                     erros = 0
 
-                    for link in nao_pagos:
+                    # Coleta todos os resultados PRIMEIRO (chamadas Cielo em série)
+                    for i, link in enumerate(nao_pagos_ativos):
                         try:
                             orders = cielo.get_link_payments(link["cielo_id"])
                             status, raw, label, parcelas = classificar_pagamento(orders)
-                            db.atualizar_status(link["cielo_id"], status, raw, label, parcelas)
+                            atualizacoes.append({
+                                "cielo_id": link["cielo_id"],
+                                "status": status,
+                                "status_raw": raw,
+                                "status_label": label,
+                                "parcelas_efetivas": parcelas,
+                            })
                             if status == "pago":
                                 novos_pagos += 1
                         except Exception:
                             erros += 1
 
+                        progresso.progress(
+                            (i + 1) / total,
+                            text=f"Consultando Cielo... ({i + 1}/{total})",
+                        )
+
+                    # Salva TUDO de uma vez no Google Sheets (1 chamada só)
+                    progresso.progress(1.0, text="Salvando resultados na planilha...")
+                    db.atualizar_status_em_lote(atualizacoes)
+                    progresso.empty()
+
+                    # Feedback consolidado
                     if novos_pagos:
                         st.success(f"✓ {novos_pagos} novo(s) pagamento(s) confirmado(s)!")
                     else:
-                        st.info(f"Verificados {len(nao_pagos)} links — nenhum pago ainda.")
+                        st.info(f"Verificados {total} link(s) — nenhum pago ainda.")
+                    if expirados_ignorados > 0:
+                        st.caption(
+                            f"ℹ️ {expirados_ignorados} link(s) expirado(s) foram ignorados na consulta."
+                        )
                     if erros:
                         st.warning(f"⚠️ {erros} link(s) falharam na consulta.")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+            except Exception as e:
+                st.error(f"Erro: {e}")
 
     try:
         pagos = db.listar_por_status("pago")
