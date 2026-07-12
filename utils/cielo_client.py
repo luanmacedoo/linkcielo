@@ -4,6 +4,7 @@ Gerencia OAuth2, criação de link e consulta de status de pagamentos.
 """
 import base64
 import time
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -12,6 +13,9 @@ TOKEN_ENDPOINT = f"{CIELO_API_BASE}/v2/token"
 PRODUCTS_ENDPOINT = f"{CIELO_API_BASE}/v1/products/"
 
 TOKEN_SAFETY_MARGIN_SECONDS = 60
+
+# Validade padrão dos links de pagamento (1 dia a partir da criação)
+LINK_EXPIRATION_DAYS = 1
 
 # Status da Cielo retornados como string na API /payments
 CIELO_STATUS_PAGO = {"Authorized", "PaymentConfirmed"}
@@ -120,6 +124,10 @@ class CieloClient:
         }
         if max_installments is not None:
             body["maxNumberOfInstallments"] = max_installments
+
+        # Data de expiração: agora + LINK_EXPIRATION_DAYS (formato ISO 8601 UTC)
+        expira_em = datetime.now(timezone.utc) + timedelta(days=LINK_EXPIRATION_DAYS)
+        body["expirationDate"] = expira_em.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         try:
             response = requests.post(
