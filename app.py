@@ -531,7 +531,7 @@ with tab_novo:
         with col2:
             parcelas = st.selectbox(
                 "Parcelas (máx.)",
-                options=[1, 2, 3, 4, 5, 6],
+                options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
                 format_func=lambda n: f"{n}x{' (à vista)' if n == 1 else ''}",
                 index=0,
             )
